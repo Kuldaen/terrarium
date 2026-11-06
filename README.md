@@ -6,6 +6,11 @@ plan interventions by sampling many possible futures.
 
 See [docs/design.md](docs/design.md) for the thesis and architecture.
 
+| Codename | Phenomenon | Package |
+|----------|------------|---------|
+| **Seaglass** | coastal & cliff erosion | `terrarium.phenomena.erosion` |
+| **Ignis** | wildfire | `terrarium.phenomena.wildfire` (planned) |
+
 ## Layout
 
 ```

@@ -87,7 +87,7 @@ zero-copy into PyTorch for online data generation during training. If
 irregular collapse logic becomes the bottleneck in 3D, move that part to Rust
 (PyO3) and keep dense updates in Warp.
 
-## cliff2d — the first prototype
+## Seaglass (erosion) — cliff2d, the first prototype
 
 A batched 2D cross-shore cliff simulator. Cell state: rock fraction in
 [0, 1] on an (NZ × NX) grid; per-cliff talus volume.
