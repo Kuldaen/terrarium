@@ -44,6 +44,18 @@ rollout.series["top_x"]     # [B, T] cliff-top edge position
 rollout.events["fail_vol"]  # [B, T] collapse volumes
 ```
 
+### Datasets and calibration
+
+```bash
+# training chains (monthly snapshots; any snapshot pair is a Δt example) + eval ensembles
+python experiments/erosion/make_dataset.py --out data --chains 128 --starts 16 --futures 16
+# score predictors' outcome distributions against the simulator per Δt
+python experiments/erosion/calibration_report.py --train data/train --eval data/eval --out outputs/calib
+```
+
+Baseline results: [docs/results/calibration-baselines.md](docs/results/calibration-baselines.md).
+A learned surrogate plugs in by implementing `predictors.Predictor`.
+
 Randomness enters only through `forcing` and `seeds`, so the same storm
 history can be replayed under different actions (common random numbers), and
 `get_state` / `set_state` branch futures from any point.

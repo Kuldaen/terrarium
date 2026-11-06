@@ -119,3 +119,33 @@ Processes per daily step:
 
 Outputs: rock-fraction snapshots, talus, cliff-top and toe position time
 series, failure events (step, volume, notch row).
+
+## Datasets and calibration (Seaglass)
+
+**Training chains.** Each chain is one cliff under one storm history (random
+burn-in, random revetment) with 30-day snapshots. Any pair of snapshots
+(s, s + Δt), Δt ∈ {30, 90, 360, 720, 1800} days, is an example:
+(rock field, talus, strength, action, forcing summary over the interval) →
+(rock field, talus) after Δt. Shards of memory-mappable .npy files.
+
+**Evaluation ensembles.** K start states (after burn-in), each continued
+under M independent storm futures (site tidal range shared). Gives the true
+outcome distribution per start state and Δt.
+
+**Outcomes** are computed from rock fields with one function for simulator
+and surrogate alike: cliff-top retreat, toe-band face retreat, rock volume lost.
+
+**Metrics** (core/metrics.py): CRPS (fair ensemble estimator), CRPSS vs
+climatology, randomised PIT + KS distance from uniform, tie-aware central
+interval coverage (outcomes are discrete — joint-quantised retreat), and per
+start-state Wasserstein-1 between pooled predictions and the simulator's
+spread over futures.
+
+**Baselines.** The oracle (simulator re-run with fresh failure seeds under the
+realised forcing) is calibrated by construction and validates the scoring
+pipeline; climatology, deterministic linear regression and linear + Gaussian
+noise bracket what a learned surrogate must beat. First results (128 chains,
+16 × 16 eval): oracle PIT KS ≈ 0.03–0.07 and coverage ≈ nominal at all Δt;
+the deterministic regressor has 0 % interval coverage and negative skill;
+Gaussian noise recovers rough marginal calibration but cannot represent the
+multi-modal, joint-quantised outcomes (see docs/results/).

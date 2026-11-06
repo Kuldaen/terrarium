@@ -1,7 +1,7 @@
-__pycache__/
 *.egg-info/
+*.npz
 .pytest_cache/
 .venv/
-outputs/
+__pycache__/
 data/
-*.npz
+outputs/
