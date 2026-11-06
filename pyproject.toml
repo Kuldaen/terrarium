@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "terrarium"
+version = "0.0.1"
+description = "Calibrated stochastic world models of physical phenomena for agent planning"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "warp-lang>=1.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "matplotlib>=3.8"]
+torch = ["torch>=2.3"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
