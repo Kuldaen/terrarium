@@ -56,6 +56,10 @@ class _P:
     min_overhang: int
     overtop: float
     max_joint_reach: int
+    k_spray: float
+    spray_decay: float
+    wind_ref: float
+    wdr: float
 
 
 @wp.func
@@ -108,6 +112,7 @@ def _cliff_step(
     hs: wp.array2d(dtype=float),
     surge: wp.array2d(dtype=float),
     rain: wp.array2d(dtype=float),
+    wind: wp.array2d(dtype=float),
     slr: wp.array2d(dtype=float),
     tidal_amp: wp.array(dtype=float),
     seeds: wp.array(dtype=wp.int32),
@@ -153,7 +158,8 @@ def _cliff_step(
 
     # --- cantilever failure: find most critical notch ---
     h_now = hs[b, t]
-    r_now = rain[b, t]
+    # wind-driven rain wets the face more than vertical rain
+    r_now = rain[b, t] * (1.0 + p.wdr * wp.max(wind[b, t], 0.0) / p.wind_ref)
     weak = (1.0 - p.rain_weak * wp.min(r_now, 1.0)) * (1.0 - p.wave_weak * wp.min(h_now / p.hs_ref, 1.0))
     best_r = float(0.0)
     best_n = int(-1)
@@ -299,6 +305,7 @@ def _face_erosion(
     hs: wp.array2d(dtype=float),
     surge: wp.array2d(dtype=float),
     rain: wp.array2d(dtype=float),
+    wind: wp.array2d(dtype=float),
     slr: wp.array2d(dtype=float),
     tidal_amp: wp.array(dtype=float),
 ):
@@ -334,9 +341,15 @@ def _face_erosion(
                 fsum += h * h * wp.exp(-dzi * dzi)
         rate += p.k_wave * fsum / float(p.n_phases) / s
 
-    # subaerial weathering above the highest water
-    if z > eta0 + amp + 0.5:
-        rate += p.k_weather * (p.weather_base + rain[b, t]) / s
+    # subaerial weathering above the highest water: rain (boosted by onshore
+    # wind) and salt spray decaying with height above the water
+    z_hi = eta0 + amp + 0.5
+    if z > z_hi:
+        won = wp.max(wind[b, t], 0.0) / p.wind_ref
+        wet = rain[b, t] * (1.0 + p.wdr * won)
+        rate += p.k_weather * (p.weather_base + wet) / s
+        spray = p.k_spray * won * won * (0.5 + 0.5 * hs[b, t]) * wp.exp(-(z - z_hi) / p.spray_decay)
+        rate += spray / s
 
     if rate > 0.0:
         rock[b, j, fc] = wp.max(rock[b, j, fc] - rate, 0.0)
@@ -386,6 +399,8 @@ class Cliff2D:
         p.min_overhang = ph.min_overhang_cells
         p.overtop = ph.revetment_overtop_factor
         p.max_joint_reach = int(round(2.0 / grid.dx))
+        p.k_spray, p.spray_decay = ph.k_spray, ph.spray_decay
+        p.wind_ref, p.wdr = ph.wind_ref, ph.wind_driven_rain
         self._p = p
 
         d = self.device
@@ -439,7 +454,9 @@ class Cliff2D:
         t0 = self.t
         T = days if days is not None else forcing["hs"].shape[1] - t0
         sl = slice(t0, t0 + T)
-        fz = {k: wp.array(np.ascontiguousarray(forcing[k][:, sl]), dtype=float, device=d) for k in ("hs", "surge", "rain", "slr")}
+        forcing = dict(forcing)
+        forcing.setdefault("wind", np.zeros_like(forcing["hs"]))
+        fz = {k: wp.array(np.ascontiguousarray(forcing[k][:, sl]), dtype=float, device=d) for k in ("hs", "surge", "rain", "wind", "slr")}
         amp = wp.array(forcing["tidal_amp"], dtype=float, device=d)
         sd = wp.array(np.asarray(seeds, np.int32), dtype=wp.int32, device=d)
 
@@ -461,7 +478,7 @@ class Cliff2D:
                 dim=B,
                 inputs=[
                     self._p, k, t0 + k, self.rock, self.strength, self.joints, self.top_row, self.talus,
-                    fz["hs"], fz["surge"], fz["rain"], fz["slr"], amp, sd,
+                    fz["hs"], fz["surge"], fz["rain"], fz["wind"], fz["slr"], amp, sd,
                     self.bed, self.coltop, self.face, self.shallow, self.toe_z, self.talus_h,
                     series["toe_x"], series["notch_x"], series["top_x"], series["talus"],
                     events["fail_vol"], events["fail_z"],
@@ -474,7 +491,7 @@ class Cliff2D:
                 inputs=[
                     self._p, k, self.rock, self.strength, self.bed, self.face, self.shallow,
                     self.toe_z, self.talus_h, self.rev_crest,
-                    fz["hs"], fz["surge"], fz["rain"], fz["slr"], amp,
+                    fz["hs"], fz["surge"], fz["rain"], fz["wind"], fz["slr"], amp,
                 ],
                 device=d,
             )

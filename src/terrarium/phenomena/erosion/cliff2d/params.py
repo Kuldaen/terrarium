@@ -36,6 +36,11 @@ class Physics:
     # --- subaerial weathering ---
     k_weather: float = 0.0006  # cells/day per unit rain at unit strength
     weather_base: float = 0.2  # rain-independent weathering factor
+    # --- wind: salt spray + wind-driven rain ---
+    k_spray: float = 0.0008  # cells/day at onshore wind = wind_ref, Hs = 1 m, unit strength
+    spray_decay: float = 4.0  # m, e-folding height of spray above highest water
+    wind_ref: float = 10.0  # m/s
+    wind_driven_rain: float = 1.0  # extra rain wetting per (onshore wind / wind_ref)
     # --- talus ---
     talus_bulking: float = 1.3
     talus_angle_deg: float = 35.0
@@ -85,3 +90,7 @@ class Climate:
     rain_mean: float = 0.25  # normalised daily rain index
     rain_storm_boost: float = 0.8
     slr_mm_per_year: float = 4.0
+    wind_mean: float = 6.0  # m/s typical daily wind speed at Hs = hs_mean
+    wind_hs_exponent: float = 0.6  # speed ∝ (Hs / hs_mean) ** exponent
+    wind_noise: float = 0.25  # lognormal sigma
+    storm_onshore_bias: float = 0.6  # storm winds skew onshore

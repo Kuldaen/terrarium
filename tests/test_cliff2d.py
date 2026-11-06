@@ -55,3 +55,18 @@ def test_revetment_reduces_toe_erosion(setup):
     lost = lambda r: (r.snapshots["rock"][:, 0].astype(np.float32) - r.snapshots["rock"][:, -1].astype(np.float32))
     # rows below +3 m: index (3 - z0)/dz = 28
     assert lost(rev)[:, :28].sum() < 0.5 * lost(none)[:, :28].sum()
+
+
+def test_onshore_wind_increases_upper_face_weathering(setup):
+    init, forcing = setup
+    calm = dict(forcing, wind=np.zeros_like(forcing["hs"]))
+    windy = dict(forcing, wind=np.full_like(forcing["hs"], 15.0))
+
+    def weathered(r):
+        # loss on cells still present at the end, i.e. excluding collapsed blocks
+        s = r.snapshots["rock"].astype(np.float32)
+        return ((s[:, 0] - s[:, -1]) * (s[:, -1] > 0))[:, 36:].sum()  # rows above +5 m
+
+    _, a = run(init, calm, np.arange(B))
+    _, b = run(init, windy, np.arange(B))
+    assert weathered(b) > 1.5 * weathered(a)

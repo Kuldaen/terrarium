@@ -23,6 +23,7 @@ def generate_forcing(
     hs     significant wave height offshore (m)
     surge  storm surge (m)
     rain   normalised rain index (≈0..3)
+    wind   onshore wind component (m/s, negative = offshore)
     slr    sea-level offset relative to present MSL (m)
     and per-cliff [B] array ``tidal_amp``.
     """
@@ -59,6 +60,15 @@ def generate_forcing(
     rain += storm * rng.gamma(2.0, climate.rain_storm_boost / 2.0, size=(batch, days))
     rain = np.clip(rain, 0.0, 3.0)
 
+    # wind speed correlated with waves; daily direction gives the onshore
+    # component (signed: negative = offshore). Storm days skew onshore.
+    speed = climate.wind_mean * (hs / climate.hs_mean) ** climate.wind_hs_exponent
+    speed *= np.exp(rng.normal(0.0, climate.wind_noise, size=(batch, days)))
+    theta = rng.uniform(-np.pi, np.pi, size=(batch, days))
+    onshore = np.cos(theta)
+    onshore = np.where(storm > 0, climate.storm_onshore_bias + (1 - climate.storm_onshore_bias) * onshore, onshore)
+    wind = np.clip(speed, 0.0, 35.0) * onshore
+
     slr = (climate.slr_mm_per_year / 1000.0 / 365.25) * t[None, :].repeat(batch, 0)
     tidal_amp = rng.uniform(*climate.tidal_amp_range, size=batch)
 
@@ -66,6 +76,7 @@ def generate_forcing(
         "hs": hs.astype(np.float32),
         "surge": surge.astype(np.float32),
         "rain": rain.astype(np.float32),
+        "wind": wind.astype(np.float32),
         "slr": slr.astype(np.float32),
         "tidal_amp": tidal_amp.astype(np.float32),
     }

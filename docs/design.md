@@ -101,7 +101,13 @@ Processes per daily step:
    pressure peaks slightly above still water level. Erosion ∝ force / strength.
 3. **Talus protection.** Fallen debris forms a wedge at the toe that shields
    the lower face and is removed by waves (∝ H²).
-4. **Subaerial weathering** of the face above water, scaled by rain.
+4. **Subaerial weathering** of the face above water: rain (boosted by the
+   onshore wind component — wind-driven rain) plus **salt spray** ∝ (onshore
+   wind)² · (0.5 + 0.5·Hs), decaying exponentially with height above the
+   highest water. Wind-driven rain also lowers failure strength. Wind is a
+   forcing series correlated with storms (speed ∝ Hs^0.6, storm days skew
+   onshore). Not modelled: aeolian sand abrasion/talus deflation (relevant
+   for sandy-beach and dune-backed coasts — a separate phenomenon).
 5. **Cantilever failure.** For each notch, bending stress
    σ = 3ρgL²/h of the overhanging slab vs. effective tensile strength
    (reduced by rain and wave loading). Failure is a stochastic hazard
