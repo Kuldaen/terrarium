@@ -186,7 +186,7 @@ level so the toe can "see" the cliff top). One network for all Δt.
 - **Sampling:** 20 Euler steps from noise; EMA weights; small removals
   (< 0.05) treated as sampling noise.
 - **Devices:** CUDA with fp16 (Turing) / bf16 (Ampere+) autocast, Apple MPS
-  and CPU in fp32. Default model ≈ 5 M params at base width 32.
+  and CPU in fp32. Default model ≈ 4.5 M params at base width 32.
 
 Not yet: Δt self-consistency loss, online data generation (developer agent),
 fidelity gate.
