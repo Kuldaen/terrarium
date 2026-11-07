@@ -18,7 +18,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="data")
     ap.add_argument("--chains", type=int, default=128)
-    ap.add_argument("--years", type=float, default=5.0)
+    ap.add_argument("--years", type=float, default=10.0)
     ap.add_argument("--shard", type=int, default=64)
     ap.add_argument("--starts", type=int, default=16)
     ap.add_argument("--futures", type=int, default=16)

@@ -98,9 +98,9 @@ class OraclePredictor:
 class _Fitted:
     """Shared fitting on training pairs, one model per Δt."""
 
-    def __init__(self, train: PairDataset, n_fit: int = 4000, seed: int = 0, dts: tuple[int, ...] = DT_DAYS):
+    def __init__(self, train: PairDataset, n_per_dt: int = 1500, ridge: float = 1e-2, seed: int = 0, dts: tuple[int, ...] = DT_DAYS):
         rng = np.random.default_rng(seed)
-        b = train.sample(n_fit, rng)
+        b = train.sample_stratified(n_per_dt, rng)
         self.dts = dts
         self.pool, self.coef, self.resid_std = {}, {}, {}
         sf = state_features(b["rock0"], b["top_row"], b["talus0"])
@@ -110,7 +110,13 @@ class _Fitted:
             y = b["outcomes"][sel].astype(np.float64)
             self.pool[d] = y
             Xd = X[sel]
-            coef, *_ = np.linalg.lstsq(Xd, y, rcond=1e-6)
+            # ridge on standardised columns (intercept unpenalised)
+            sd = Xd.std(0) + 1e-9
+            sd[-1] = 1.0
+            Z = Xd / sd
+            pen = ridge * len(Z) * np.eye(Z.shape[1])
+            pen[-1, -1] = 0.0
+            coef = np.linalg.solve(Z.T @ Z + pen, Z.T @ y) / sd[:, None]
             self.coef[d] = coef
             self.resid_std[d] = (y - Xd @ coef).std(0)
 
@@ -160,6 +166,6 @@ class LinearGaussPredictor:
         return np.stack(out, 1).astype(np.float32)
 
 
-def baselines(train: PairDataset, device: str | None = None, n_fit: int = 4000) -> list[Predictor]:
-    f = _Fitted(train, n_fit=n_fit)
+def baselines(train: PairDataset, device: str | None = None, n_per_dt: int = 1500) -> list[Predictor]:
+    f = _Fitted(train, n_per_dt=n_per_dt, dts=train.dts)
     return [OraclePredictor(device), ClimatologyPredictor(f), LinearPredictor(f), LinearGaussPredictor(f)]

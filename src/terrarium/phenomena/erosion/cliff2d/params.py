@@ -55,6 +55,11 @@ class Physics:
     hazard_base: float = 0.02  # 1/day at sigma/T = 1
     hazard_kappa: float = 4.0
     min_overhang_cells: int = 1
+    # weakest-path crack
+    crack_lateral_penalty: float = 1.5  # extra cost per sideways step (in strength units)
+    crack_noise: float = 0.5  # per-collapse multiplicative noise on cell cost (±half)
+    crack_seaward_cells: int = 2  # crack may start this far seaward of the notch back
+    crack_reach_m: float = 2.0  # and wander this far landward
     # --- revetment ---
     revetment_overtop_factor: float = 0.5  # H multiplier for face above crest
 
@@ -73,6 +78,17 @@ class Geology:
     cell_strength_sigma: float = 0.1
     joint_spacing_mean: float = 1.5  # m
     joint_spacing_sigma: float = 0.5  # lognormal sigma
+    joint_dip_mean_deg: float = 78.0  # from horizontal; lean direction random
+    joint_dip_sigma_deg: float = 8.0
+    joint_wobble_cells: float = 0.35  # random-walk step per row
+    joint_on_m: float = 4.0  # mean length of open joint segments
+    joint_off_m: float = 0.8  # mean length of intact rock bridges
+    joint_weakness_range: tuple[float, float] = (0.25, 0.6)  # strength multiplier
+    bedding_on_m: float = 3.0
+    bedding_off_m: float = 1.5
+    bedding_weakness: float = 0.6
+    # (wavelength m, log-strength amplitude) of correlated heterogeneity
+    heterogeneity_octaves: tuple[tuple[float, float], ...] = ((4.0, 0.25), (1.5, 0.2), (0.5, 0.15))
 
 
 @dataclass(frozen=True)

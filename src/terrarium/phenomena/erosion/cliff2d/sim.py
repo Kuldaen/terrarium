@@ -3,7 +3,8 @@
 One daily step = two kernel launches:
 
 1. ``_cliff_step`` (one thread per cliff): bed/face extraction, talus removal,
-   stochastic cantilever failure + block removal, series recording.
+   stochastic cantilever failure with a weakest-path crack through the
+   strength field, removal of unsupported rock, series recording.
 2. ``_face_erosion`` (one thread per cliff row): wave attack and weathering of
    the seaward-most rock cell in each row.
 
@@ -56,6 +57,10 @@ class _P:
     min_overhang: int
     overtop: float
     max_joint_reach: int
+    crack_lateral: float
+    crack_noise: float
+    crack_seaward: int
+    crack_reach: int
     k_spray: float
     spray_decay: float
     wind_ref: float
@@ -99,6 +104,201 @@ def _wave_at(
     return h * wp.exp(-p.alpha * float(shallow[b, k, fc]) * p.dx)
 
 
+@wp.func
+def _refresh_geometry(
+    p: _P,
+    rock: wp.array3d(dtype=float),
+    bed: wp.array2d(dtype=wp.int32),
+    coltop: wp.array2d(dtype=wp.int32),
+    face: wp.array2d(dtype=wp.int32),
+    b: int,
+):
+    nx = p.nx
+    nz = p.nz
+    for i in range(nx):
+        k = int(0)
+        while k < nz and rock[b, k, i] > 0.0:
+            k += 1
+        bed[b, i] = k
+        top = int(-1)
+        for jj in range(nz):
+            if rock[b, jj, i] > 0.0:
+                top = jj
+        coltop[b, i] = top
+    for j in range(nz):
+        f = int(nx)
+        for i in range(nx):
+            if rock[b, j, i] > 0.0:
+                f = i
+                break
+        face[b, j] = f
+
+
+@wp.func
+def _remove_unsupported(
+    p: _P,
+    rock: wp.array3d(dtype=float),
+    visit: wp.array3d(dtype=wp.int32),
+    stack: wp.array2d(dtype=wp.int32),
+    b: int,
+) -> float:
+    """Flood-fill from the bottom row; delete rock not connected to it. Returns cell-volume removed."""
+    nx = p.nx
+    nz = p.nz
+    for j in range(nz):
+        for i in range(nx):
+            visit[b, j, i] = 0
+    sp = int(0)
+    for i in range(nx):
+        if rock[b, 0, i] > 0.0:
+            visit[b, 0, i] = 1
+            stack[b, sp] = i
+            sp += 1
+    while sp > 0:
+        sp -= 1
+        idx = stack[b, sp]
+        j = idx // nx
+        i = idx - j * nx
+        for d in range(4):
+            jj = j
+            ii = i
+            if d == 0:
+                jj = j + 1
+            elif d == 1:
+                jj = j - 1
+            elif d == 2:
+                ii = i + 1
+            else:
+                ii = i - 1
+            if jj >= 0 and jj < nz and ii >= 0 and ii < nx:
+                if visit[b, jj, ii] == 0 and rock[b, jj, ii] > 0.0:
+                    visit[b, jj, ii] = 1
+                    stack[b, sp] = jj * nx + ii
+                    sp += 1
+    vol = float(0.0)
+    for j in range(nz):
+        for i in range(nx):
+            if rock[b, j, i] > 0.0 and visit[b, j, i] == 0:
+                vol += rock[b, j, i]
+                rock[b, j, i] = 0.0
+    return vol
+
+
+@wp.func
+def _crack_and_remove(
+    p: _P,
+    rock: wp.array3d(dtype=float),
+    strength: wp.array3d(dtype=float),
+    coltop: wp.array2d(dtype=wp.int32),
+    ccell: wp.array3d(dtype=float),
+    ccost: wp.array3d(dtype=float),
+    cpar: wp.array3d(dtype=wp.int32),
+    cbound: wp.array2d(dtype=wp.int32),
+    b: int,
+    n0: int,
+    xc: int,
+    state: wp.uint32,
+) -> float:
+    """Weakest-path crack from the notch roof (row n0, near column xc) up to
+    the cliff-top surface; removes rock seaward of it. Returns cell-volume removed.
+
+    Dynamic programme over rows (the crack never runs downward): each cell can
+    be entered from the three cells below or sideways within its row. Cell
+    cost = local strength x per-collapse noise; sideways steps pay a penalty.
+    """
+    nx = p.nx
+    nz = p.nz
+    INF = float(1.0e30)
+    x_lo = wp.max(xc - p.crack_seaward, 0)
+    x_hi = wp.min(xc + p.crack_reach, nx - 1)
+    best = INF
+    bj = int(-1)
+    bi = int(-1)
+    j = n0
+    alive = int(1)
+    while j < nz and alive == 1:
+        alive = int(0)
+        for i in range(x_lo, x_hi + 1):
+            ccost[b, j, i] = INF
+            cpar[b, j, i] = -1
+            c = INF
+            if rock[b, j, i] > 0.0:
+                c = strength[b, j, i] * (1.0 + p.crack_noise * (wp.randf(state) - 0.5))
+            ccell[b, j, i] = c
+            if c < INF:
+                if j == n0:
+                    if i >= xc - 1 and i <= xc + 1:
+                        ccost[b, j, i] = c
+                        cpar[b, j, i] = -2
+                else:
+                    for di in range(3):
+                        ii = i + di - 1
+                        if ii >= x_lo and ii <= x_hi:
+                            pc = ccost[b, j - 1, ii]
+                            if pc < INF:
+                                extra = float(0.0)
+                                if ii != i:
+                                    extra = 0.5 * p.crack_lateral
+                                if pc + c + extra < ccost[b, j, i]:
+                                    ccost[b, j, i] = pc + c + extra
+                                    cpar[b, j, i] = ii
+        # sideways moves within the row (two sweeps)
+        for i in range(x_lo + 1, x_hi + 1):
+            if ccell[b, j, i] < INF and ccost[b, j, i - 1] < INF:
+                cand = ccost[b, j, i - 1] + ccell[b, j, i] + p.crack_lateral
+                if cand < ccost[b, j, i]:
+                    ccost[b, j, i] = cand
+                    cpar[b, j, i] = nx + i - 1
+        i = x_hi - 1
+        while i >= x_lo:
+            if ccell[b, j, i] < INF and ccost[b, j, i + 1] < INF:
+                cand = ccost[b, j, i + 1] + ccell[b, j, i] + p.crack_lateral
+                if cand < ccost[b, j, i]:
+                    ccost[b, j, i] = cand
+                    cpar[b, j, i] = nx + i + 1
+            i -= 1
+        # terminals: topmost rock of a column = crack reaches the surface
+        for i in range(x_lo, x_hi + 1):
+            if ccost[b, j, i] < INF:
+                alive = int(1)
+                if coltop[b, i] == j and ccost[b, j, i] < best:
+                    best = ccost[b, j, i]
+                    bj = j
+                    bi = i
+        j += 1
+
+    for jj in range(n0, nz):
+        cbound[b, jj] = -1
+    top_j = int(nz - 1)
+    if bj < 0:
+        # no path through rock: fall back to a straight break at the notch back
+        for jj in range(n0, nz):
+            cbound[b, jj] = xc
+    else:
+        top_j = bj
+        cj = bj
+        ci = bi
+        going = int(1)
+        while going == 1:
+            if ci > cbound[b, cj]:
+                cbound[b, cj] = ci
+            par = cpar[b, cj, ci]
+            if par == -2 or par == -1:
+                going = int(0)
+            elif par >= nx:
+                ci = par - nx
+            else:
+                cj = cj - 1
+                ci = par
+    vol = float(0.0)
+    for jj in range(n0, top_j + 1):
+        bound = cbound[b, jj]
+        for ii in range(bound + 1):
+            vol += rock[b, jj, ii]
+            rock[b, jj, ii] = 0.0
+    return vol
+
+
 @wp.kernel
 def _cliff_step(
     p: _P,
@@ -129,32 +329,20 @@ def _cliff_step(
     s_talus: wp.array2d(dtype=float),
     e_fail_vol: wp.array2d(dtype=float),
     e_fail_z: wp.array2d(dtype=float),
+    ccell: wp.array3d(dtype=float),
+    ccost: wp.array3d(dtype=float),
+    cpar: wp.array3d(dtype=wp.int32),
+    cbound: wp.array2d(dtype=wp.int32),
+    visit: wp.array3d(dtype=wp.int32),
+    stack: wp.array2d(dtype=wp.int32),
+    do_fill: int,
 ):
     b = wp.tid()
     nx = p.nx
     nz = p.nz
     tr = top_row[b]
 
-    # --- bed heights (contiguous rock from the bottom) ---
-    for i in range(nx):
-        k = int(0)
-        while k < nz and rock[b, k, i] > 0.0:
-            k += 1
-        bed[b, i] = k
-        top = int(-1)
-        for jj in range(nz):
-            if rock[b, jj, i] > 0.0:
-                top = jj
-        coltop[b, i] = top
-
-    # --- face column per row ---
-    for j in range(nz):
-        f = int(nx)
-        for i in range(nx):
-            if rock[b, j, i] > 0.0:
-                f = i
-                break
-        face[b, j] = f
+    _refresh_geometry(p, rock, bed, coltop, face, b)
 
     # --- cantilever failure: find most critical notch ---
     h_now = hs[b, t]
@@ -192,41 +380,18 @@ def _cliff_step(
         state = wp.rand_init(seeds[b], t_abs)
         u = wp.randf(state)
         if u < prob:
-            xc = face[b, best_n]
-            # crack snaps to the nearest joint landward of the notch back
-            xcrack = xc
-            for k in range(joints.shape[1]):
-                jx = joints[b, k]
-                if jx >= xc:
-                    if jx - xc <= p.max_joint_reach:
-                        xcrack = jx
-                    break
-            vol = float(0.0)
-            for j in range(best_n + 1, nz):
-                for i in range(xcrack):
-                    vol += rock[b, j, i]
-                    rock[b, j, i] = 0.0
+            vol = _crack_and_remove(p, rock, strength, coltop, ccell, ccost, cpar, cbound, b, best_n + 1, face[b, best_n], state)
+            vol += _remove_unsupported(p, rock, visit, stack, b)
             fail_vol = vol * p.dx * p.dz
             fail_z = p.z0 + (float(best_n) + 1.0) * p.dz
-            talus[b] = talus[b] + fail_vol * p.bulking
-            # refresh faces / beds above the notch
-            for j in range(best_n + 1, nz):
-                f = int(nx)
-                for i in range(nx):
-                    if rock[b, j, i] > 0.0:
-                        f = i
-                        break
-                face[b, j] = f
-            for i in range(xcrack):
-                k = int(0)
-                while k < nz and rock[b, k, i] > 0.0:
-                    k += 1
-                bed[b, i] = k
-                top = int(-1)
-                for jj in range(nz):
-                    if rock[b, jj, i] > 0.0:
-                        top = jj
-                coltop[b, i] = top
+            _refresh_geometry(p, rock, bed, coltop, face, b)
+    if fail_vol == 0.0 and do_fill == 1:
+        # periodic cleanup: weathering can strand small pieces of rock
+        v = _remove_unsupported(p, rock, visit, stack, b)
+        if v > 0.0:
+            fail_vol = v * p.dx * p.dz
+            _refresh_geometry(p, rock, bed, coltop, face, b)
+    talus[b] = talus[b] + fail_vol * p.bulking
     e_fail_vol[b, t] = fail_vol
     e_fail_z[b, t] = fail_z
 
@@ -399,6 +564,9 @@ class Cliff2D:
         p.min_overhang = ph.min_overhang_cells
         p.overtop = ph.revetment_overtop_factor
         p.max_joint_reach = int(round(2.0 / grid.dx))
+        p.crack_lateral, p.crack_noise = ph.crack_lateral_penalty, ph.crack_noise
+        p.crack_seaward = ph.crack_seaward_cells
+        p.crack_reach = int(round(ph.crack_reach_m / grid.dx))
         p.k_spray, p.spray_decay = ph.k_spray, ph.spray_decay
         p.wind_ref, p.wdr = ph.wind_ref, ph.wind_driven_rain
         self._p = p
@@ -413,6 +581,12 @@ class Cliff2D:
         self.bed = wp.zeros((B, nx), dtype=wp.int32, device=d)
         self.coltop = wp.zeros((B, nx), dtype=wp.int32, device=d)
         self.face = wp.zeros((B, nz), dtype=wp.int32, device=d)
+        self.ccell = wp.zeros((B, nz, nx), dtype=float, device=d)
+        self.ccost = wp.zeros((B, nz, nx), dtype=float, device=d)
+        self.cpar = wp.zeros((B, nz, nx), dtype=wp.int32, device=d)
+        self.cbound = wp.zeros((B, nz), dtype=wp.int32, device=d)
+        self.visit = wp.zeros((B, nz, nx), dtype=wp.int32, device=d)
+        self.stack = wp.zeros((B, nz * nx), dtype=wp.int32, device=d)
         self.shallow = wp.zeros((B, physics.n_tide_phases, nx + 1), dtype=wp.int32, device=d)
         self.toe_z = wp.zeros(B, dtype=float, device=d)
         self.talus_h = wp.zeros(B, dtype=float, device=d)
@@ -482,6 +656,8 @@ class Cliff2D:
                     self.bed, self.coltop, self.face, self.shallow, self.toe_z, self.talus_h,
                     series["toe_x"], series["notch_x"], series["top_x"], series["talus"],
                     events["fail_vol"], events["fail_z"],
+                    self.ccell, self.ccost, self.cpar, self.cbound, self.visit, self.stack,
+                    1 if (t0 + k) % 30 == 0 else 0,
                 ],
                 device=d,
             )

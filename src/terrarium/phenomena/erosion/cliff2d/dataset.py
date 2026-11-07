@@ -74,7 +74,7 @@ def _manifest(kind: str, **extra) -> dict:
 def generate_training(
     out_dir: str | Path,
     n_chains: int,
-    years: float = 5.0,
+    years: float = 10.0,  # >> max Δt so long-Δt pairs are plentiful
     shard_size: int = 64,
     max_burn_in_days: int = 720,
     revetment_prob: float = 0.4,
@@ -163,10 +163,17 @@ class PairDataset:
             "outcomes": cliff_outcomes(r0, r1, sh["top_row"][c]),
         }
 
-    def sample(self, n: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
-        idx = rng.choice(len(self), size=min(n, len(self)), replace=False)
+    def sample(self, n: int, rng: np.random.Generator, dt: int | None = None) -> dict[str, np.ndarray]:
+        """Random batch of pairs; restricted to one Δt if given."""
+        pool = np.arange(len(self)) if dt is None else np.nonzero(self.index[:, 3] == dt)[0]
+        idx = rng.choice(pool, size=min(n, len(pool)), replace=False)
         items = [self[int(i)] for i in idx]
         return {k: np.stack([it[k] for it in items]) for k in items[0]}
+
+    def sample_stratified(self, n_per_dt: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
+        """Equal number of pairs per Δt (long Δt pairs are rarer in chains)."""
+        parts = [self.sample(n_per_dt, rng, dt=d) for d in self.dts]
+        return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
 
 
 # --------------------------------------------------------------------------

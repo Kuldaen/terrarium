@@ -111,8 +111,19 @@ Processes per daily step:
 5. **Cantilever failure.** For each notch, bending stress
    σ = 3ρgL²/h of the overhanging slab vs. effective tensile strength
    (reduced by rain and wave loading). Failure is a stochastic hazard
-   λ = λ₀·exp(κ(σ/T − 1)) drawn with per-cliff seeds; the crack snaps to the
-   nearest joint landward of the notch, giving variable block sizes.
+   λ = λ₀·exp(κ(σ/T − 1)) drawn with per-cliff seeds.
+   **The crack is not prescribed.** It is the weakest path through the
+   strength field from the notch roof to the cliff-top surface: a dynamic
+   programme over rows (never downward), entering each cell from below or
+   sideways, cost = local strength × per-collapse noise, sideways steps
+   penalised (keeps scars steep, ~80°, rather than staircasing along
+   bedding). Rock seaward of the path falls; a flood fill then removes any
+   rock left unconnected to the ground (also run every 30 days to catch
+   pieces stranded by weathering).
+   **Rock structure lives in the strength field**: layers, multi-scale
+   correlated heterogeneity (4 m / 1.5 m / 0.5 m wavelengths), dipping
+   (78° ± 8°, either lean), wavy, non-persistent joint traces with intact
+   bridges, and gapped bedding partings. Joints also erode faster.
 6. **Actions.** Revetment crest elevation (protects the face below it,
    reduces overtopping wave height). Asset setback is evaluated from the
    recorded cliff-top edge.
@@ -123,7 +134,9 @@ series, failure events (step, volume, notch row).
 ## Datasets and calibration (Seaglass)
 
 **Training chains.** Each chain is one cliff under one storm history (random
-burn-in, random revetment) with 30-day snapshots. Any pair of snapshots
+burn-in, random revetment) with 30-day snapshots, 10 years long by default —
+much longer than the longest Δt, otherwise long-Δt pairs are scarce (a 5-year
+chain gives only one or two 5-year pairs). Any pair of snapshots
 (s, s + Δt), Δt ∈ {30, 90, 360, 720, 1800} days, is an example:
 (rock field, talus, strength, action, forcing summary over the interval) →
 (rock field, talus) after Δt. Shards of memory-mappable .npy files.
@@ -144,8 +157,16 @@ spread over futures.
 **Baselines.** The oracle (simulator re-run with fresh failure seeds under the
 realised forcing) is calibrated by construction and validates the scoring
 pipeline; climatology, deterministic linear regression and linear + Gaussian
-noise bracket what a learned surrogate must beat. First results (128 chains,
-16 × 16 eval): oracle PIT KS ≈ 0.03–0.07 and coverage ≈ nominal at all Δt;
-the deterministic regressor has 0 % interval coverage and negative skill;
-Gaussian noise recovers rough marginal calibration but cannot represent the
-multi-modal, joint-quantised outcomes (see docs/results/).
+noise bracket what a learned surrogate must beat (regressions are ridge,
+fitted per Δt on Δt-stratified samples). Results with weakest-path cracks
+(128 × 10-yr chains, 16 × 16 eval), 5-yr volume lost — CRPS: oracle 1.9,
+climatology 11.4, linear 9.0, linear+Gaussian 6.5; 90 % coverage: 0.92,
+0.73, 0.00, 0.86. The oracle stays calibrated (PIT KS ≈ 0.05) at all Δt.
+See docs/results/.
+
+**Per-cliff clumping is partly real.** For one cliff whose rock structure is
+known, futures still cluster: collapses keep exploiting the same existing
+joints, and the randomness is *when* and *which nearby* joint goes. Averaged
+over cliffs (or over unknown structure — an epistemic variable) the
+distribution is smooth. Whether the surrogate sees the strength field
+therefore changes what "calibrated" means; both settings should be scored.
