@@ -74,6 +74,18 @@ def summarize_forcing(daily: np.ndarray, tidal_amp: np.ndarray) -> np.ndarray:
     return np.stack(feats, -1).astype(np.float32)
 
 
+def step_summaries(daily: np.ndarray, tidal_amp: np.ndarray, step_days) -> np.ndarray:
+    """Forcing summaries for consecutive intervals.
+
+    daily: [N, T, C] with T >= sum(step_days); returns [N, S, F].
+    """
+    out, t = [], 0
+    for d in step_days:
+        out.append(summarize_forcing(daily[:, t : t + d], tidal_amp))
+        t += d
+    return np.stack(out, 1)
+
+
 def _first_rock_col(rows: np.ndarray, nx: int) -> np.ndarray:
     """rows: [..., nx] bool -> index of first True, nx if none."""
     any_ = rows.any(-1)

@@ -75,7 +75,28 @@ python experiments/erosion/train_surrogate.py --data data/train --out runs/nostr
 # 3. score against the simulator (add --skip oracle to save time on re-runs)
 python experiments/erosion/calibration_report.py --train data/train --eval data/eval \
     --surrogate runs/2060/last.pt runs/nostrength/last.pt --out outputs/calib_surrogate
+
+# 4. trajectories + "what if" plans: chained yearly rollouts vs the simulator
+python experiments/erosion/rollout_check.py --eval data/eval --surrogate runs/2060/last.pt --out outputs/rollout
 ```
+
+### "What if" forecasts
+
+```python
+from terrarium.phenomena.erosion.cliff2d.surrogate import FlowSurrogate, rollout
+from terrarium.phenomena.erosion.cliff2d.summary import step_summaries
+
+model = FlowSurrogate.load("runs/2060/last.pt", device)
+steps = [360] * 5                                         # five 1-year jumps
+sums = step_summaries(daily_forcing, tidal_amp, steps)    # [N, 5, F] per-step storm summaries
+plan = np.full((N, 5), np.nan); plan[:, 2:] = 3.0         # build 3 m armour at the start of year 3
+traj = rollout(model, rock0, strength, top_row, talus0, steps, sums, plan, n_samples=64, seed=0)
+traj["outcomes"]   # [N, 64, 5, 3] cumulative top retreat / toe retreat / volume lost per year
+```
+
+Re-using `seed` (and the same forcing) across plans gives common random
+numbers: plan differences are not drowned in sampling noise.
+`dataset.simulate_plan` is the simulator equivalent for checking.
 
 Randomness enters only through `forcing` and `seeds`, so the same storm
 history can be replayed under different actions (common random numbers), and

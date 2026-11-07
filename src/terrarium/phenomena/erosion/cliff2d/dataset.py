@@ -205,6 +205,33 @@ def branch_rollout(
     return np.stack(rocks, 1), np.stack(tal, 1)
 
 
+def simulate_plan(
+    init: dict[str, np.ndarray],
+    rock: np.ndarray,
+    talus: np.ndarray,
+    forcing: dict[str, np.ndarray],
+    seeds: np.ndarray,
+    step_days,
+    rev_plan: np.ndarray,
+    device: str | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Ground-truth counterpart of ``surrogate.rollout``: run the simulator
+    through consecutive steps, switching the revetment action per step.
+
+    rev_plan [N, S] crest per step (NaN = none). Returns rock [N, S+1, NZ, NX]
+    (float16) and talus [N, S+1]. Same forcing + seeds = common random numbers.
+    """
+    sim = Cliff2D(init, device=device)
+    sim.set_state({"rock": rock.astype(np.float32), "talus": talus.astype(np.float32), "t": np.array(0)})
+    rocks, tal = [rock.astype(np.float16)], [talus.astype(np.float32)]
+    for s, d in enumerate(step_days):
+        sim.set_actions(revetment_crest=rev_plan[:, s])
+        r = sim.run(forcing, seeds=seeds, snapshot_every=d, days=d)
+        rocks.append(r.snapshots["rock"][:, -1])
+        tal.append(sim.talus.numpy().copy())
+    return np.stack(rocks, 1), np.stack(tal, 1)
+
+
 def generate_eval(
     out_dir: str | Path,
     n_starts: int,

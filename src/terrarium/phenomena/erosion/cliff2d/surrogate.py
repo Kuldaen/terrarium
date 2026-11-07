@@ -191,8 +191,8 @@ class FlowSurrogate:
     def __init__(self, cfg: SurrogateConfig, cond_mean: np.ndarray, cond_std: np.ndarray, device: torch.device):
         self.cfg, self.device = cfg, device
         self.net = UNet(cfg).to(device)
-        self.cond_mean = torch.tensor(cond_mean, device=device)
-        self.cond_std = torch.tensor(cond_std, device=device)
+        self.cond_mean = torch.tensor(np.asarray(cond_mean, np.float32), device=device)
+        self.cond_std = torch.tensor(np.asarray(cond_std, np.float32), device=device)
 
     # ---- batch preparation ----
     def tensors(self, rock0, strength, cvec_raw):
@@ -210,9 +210,10 @@ class FlowSurrogate:
 
     # ---- sampling ----
     @torch.no_grad()
-    def sample(self, cimg, cvec, steps: int = 20, generator: torch.Generator | None = None, net: nn.Module | None = None):
+    def sample(self, cimg, cvec, steps: int = 20, generator: torch.Generator | None = None, net: nn.Module | None = None, x0: torch.Tensor | None = None):
+        """Integrate noise -> target. Pass ``x0`` to fix the noise (common random numbers)."""
         net = net or self.net
-        x = torch.randn((cimg.shape[0], 2) + tuple(cimg.shape[-2:]), device=cimg.device, generator=generator)
+        x = x0.clone() if x0 is not None else torch.randn((cimg.shape[0], 2) + tuple(cimg.shape[-2:]), device=cimg.device, generator=generator)
         for i in range(steps):
             tau = torch.full((x.shape[0],), i / steps, device=x.device)
             x = x + net(x, cimg, tau, cvec) / steps
@@ -260,3 +261,76 @@ class SurrogatePredictor:
                 flat = np.arange(s0, s0 + len(idx))
                 out[flat // n_samples, di, flat % n_samples] = o
         return out
+
+
+# --------------------------------------------------------------------------
+# rollouts: chained steps under an action plan
+# --------------------------------------------------------------------------
+
+
+def _noise(shape, seed: int, step: int, chunk: int, device) -> torch.Tensor:
+    """Deterministic noise per (seed, step, chunk): the same seed gives the same
+    model randomness across plans, so plan comparisons use common random numbers."""
+    g = torch.Generator(device="cpu").manual_seed((seed * 1_000_003 + step * 10_007 + chunk) % (2**63 - 1))
+    return torch.randn(shape, generator=g).to(device)
+
+
+def rollout(
+    model: FlowSurrogate,
+    rock0: np.ndarray,
+    strength: np.ndarray,
+    top_row: np.ndarray,
+    talus0: np.ndarray,
+    step_days,
+    summaries: np.ndarray,
+    rev_plan: np.ndarray,
+    n_samples: int = 1,
+    seed: int = 0,
+    flow_steps: int = 20,
+    batch: int = 128,
+    keep_fields: bool = True,
+) -> dict[str, np.ndarray]:
+    """Sample trajectories by chaining Δt jumps from sampled states.
+
+    rock0, strength  [N, NZ, NX]   start states (strength ignored if the model doesn't use it)
+    top_row, talus0  [N]
+    step_days        S step lengths in days, e.g. [360] * 5; any Δt the model was trained on
+    summaries        [N, S, F]     forcing summary of each step's interval (see ``step_summaries``)
+    rev_plan         [N, S]        revetment crest in force during each step (NaN = none)
+    n_samples        futures per start; sample j of start i uses the same noise for any plan
+
+    Returns
+      rock      [N, n, S+1, NZ, NX] float16 (if keep_fields)
+      talus     [N, n, S+1]
+      outcomes  [N, n, S, 3] cumulative from the start (top retreat, toe retreat, volume lost)
+    """
+    N, S = len(rock0), len(step_days)
+    rep = lambda a: np.repeat(np.asarray(a), n_samples, axis=0)
+    cur, tal = rep(rock0).astype(np.float32), rep(talus0).astype(np.float32)
+    st, tr = rep(strength).astype(np.float32), rep(top_row)
+    start = cur.copy()
+    M = len(cur)
+    rocks = [cur.astype(np.float16)] if keep_fields else []
+    tals, outs = [tal.copy()], []
+    for s, d in enumerate(step_days):
+        cv = cond_vector(rep(summaries[:, s]), np.full(M, d), rep(rev_plan[:, s]), tal)
+        nxt = np.empty_like(cur)
+        ntal = np.empty_like(tal)
+        for ci, s0 in enumerate(range(0, M, batch)):
+            sl = slice(s0, min(s0 + batch, M))
+            cimg, c = model.tensors(cur[sl], st[sl], cv[sl])
+            x0 = _noise((sl.stop - sl.start, 2) + cur.shape[1:], seed, s, ci, model.device)
+            x = model.sample(cimg, c, flow_steps, x0=x0).float().cpu().numpy()
+            nxt[sl], ntal[sl] = decode_target(x, cur[sl])
+        cur, tal = nxt, ntal
+        if keep_fields:
+            rocks.append(cur.astype(np.float16))
+        tals.append(tal.copy())
+        outs.append(cliff_outcomes(start, cur, tr))
+    res = {
+        "talus": np.stack(tals, 1).reshape(N, n_samples, S + 1),
+        "outcomes": np.stack(outs, 1).reshape(N, n_samples, S, 3),
+    }
+    if keep_fields:
+        res["rock"] = np.stack(rocks, 1).reshape((N, n_samples, S + 1) + rock0.shape[1:])
+    return res
