@@ -54,7 +54,28 @@ python experiments/erosion/calibration_report.py --train data/train --eval data/
 ```
 
 Baseline results: [docs/results/calibration-baselines.md](docs/results/calibration-baselines.md).
-A learned surrogate plugs in by implementing `predictors.Predictor`.
+
+### Training the surrogate
+
+Needs `pip install -e ".[dev,torch]"`. Device is auto-detected: CUDA (fp16 on
+Turing such as an RTX 2060, bf16 on Ampere+), Apple MPS (fp32), else CPU.
+The Warp simulator is CPU-only on macOS, GPU on Linux/CUDA.
+
+```bash
+# 1. data (Mac: CPU sim, a few minutes; Linux+CUDA: add --device cuda)
+python experiments/erosion/make_dataset.py --out data --chains 2000 --shard 256 --starts 64 --futures 32
+
+# 2a. MacBook (M2, MPS): quick iteration
+python experiments/erosion/train_surrogate.py --data data/train --out runs/mac --steps 20000 --batch 32 --workers 4
+# 2b. RTX 2060 (6 GB): longer run
+python experiments/erosion/train_surrogate.py --data data/train --out runs/2060 --steps 100000 --batch 64 --workers 6
+# optional "survey-only" variant: geology hidden from the model
+python experiments/erosion/train_surrogate.py --data data/train --out runs/nostrength --no-strength ...
+
+# 3. score against the simulator (add --skip oracle to save time on re-runs)
+python experiments/erosion/calibration_report.py --train data/train --eval data/eval \
+    --surrogate runs/2060/last.pt runs/nostrength/last.pt --out outputs/calib_surrogate
+```
 
 Randomness enters only through `forcing` and `seeds`, so the same storm
 history can be replayed under different actions (common random numbers), and

@@ -71,6 +71,8 @@ def main():
     ap.add_argument("--max-cases", type=int, default=0, help="limit number of (start, future) cases; 0 = all")
     ap.add_argument("--skip", nargs="*", default=[], help="predictor names to skip (e.g. oracle)")
     ap.add_argument("--device", default=None)
+    ap.add_argument("--surrogate", nargs="*", default=[], help="surrogate checkpoint(s) to score")
+    ap.add_argument("--surrogate-steps", type=int, default=20, help="flow-matching sampling steps")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -87,6 +89,14 @@ def main():
     print(f"{len(k)} cases ({ev.K} starts x {ev.M} futures), Δt = {ev.dts} days")
 
     preds = [p for p in baselines(train, a.device) if p.name not in a.skip]
+    if a.surrogate:
+        from terrarium.phenomena.erosion.cliff2d.surrogate import SurrogatePredictor
+
+        for path in a.surrogate:
+            sp = SurrogatePredictor(path, steps=a.surrogate_steps)
+            if any(p.name == sp.name for p in preds):
+                sp.name = f"{sp.name}:{Path(path).parent.name}"
+            preds.append(sp)
     results, samples_by = {}, {}
     for p in preds:
         n = a.oracle_samples if p.name == "oracle" else a.n_samples

@@ -1,0 +1,15 @@
+{
+  "data": "data/train",
+  "out": "runs/smoke",
+  "steps": 300,
+  "batch": 16,
+  "lr": 0.0002,
+  "base_ch": 16,
+  "no_strength": false,
+  "ema": 0.999,
+  "workers": 2,
+  "device": null,
+  "log_every": 50,
+  "save_every": 5000,
+  "seed": 0
+}

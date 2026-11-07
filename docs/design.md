@@ -170,3 +170,23 @@ joints, and the randomness is *when* and *which nearby* joint goes. Averaged
 over cliffs (or over unknown structure — an epistemic variable) the
 distribution is smooth. Whether the surrogate sees the strength field
 therefore changes what "calibrated" means; both settings should be scored.
+
+## Surrogate v0 (Seaglass)
+
+Conditional flow matching (rectified flow) with a U-Net (FiLM conditioning
+on flow time + conditioning vector; global self-attention at the coarsest
+level so the toe can "see" the cliff top). One network for all Δt.
+
+- **Target:** rock *removed* over the interval (so rock can only decrease —
+  enforced by construction) and end-of-interval talus.
+- **Conditioning images:** current rock field; strength field optional
+  (`--no-strength` = survey-only setting, geology inferred from the profile).
+- **Conditioning vector:** forcing summary (incl. Δt), log Δt, revetment
+  flag + crest, starting talus.
+- **Sampling:** 20 Euler steps from noise; EMA weights; small removals
+  (< 0.05) treated as sampling noise.
+- **Devices:** CUDA with fp16 (Turing) / bf16 (Ampere+) autocast, Apple MPS
+  and CPU in fp32. Default model ≈ 5 M params at base width 32.
+
+Not yet: Δt self-consistency loss, online data generation (developer agent),
+fidelity gate.
