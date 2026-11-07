@@ -170,3 +170,37 @@ joints, and the randomness is *when* and *which nearby* joint goes. Averaged
 over cliffs (or over unknown structure — an epistemic variable) the
 distribution is smooth. Whether the surrogate sees the strength field
 therefore changes what "calibrated" means; both settings should be scored.
+
+## Surrogate v0 (Seaglass)
+
+Conditional flow matching (rectified flow) with a U-Net (FiLM conditioning
+on flow time + conditioning vector; global self-attention at the coarsest
+level so the toe can "see" the cliff top). One network for all Δt.
+
+- **Target:** rock *removed* over the interval (so rock can only decrease —
+  enforced by construction) and end-of-interval talus.
+- **Conditioning images:** current rock field; strength field optional
+  (`--no-strength` = survey-only setting, geology inferred from the profile).
+- **Conditioning vector:** forcing summary (incl. Δt), log Δt, revetment
+  flag + crest, starting talus.
+- **Sampling:** 20 Euler steps from noise; EMA weights; small removals
+  (< 0.05) treated as sampling noise.
+- **Devices:** CUDA with fp16 (Turing) / bf16 (Ampere+) autocast, Apple MPS
+  and CPU in fp32. Default model ≈ 4.5 M params at base width 32.
+
+**Rollouts and plans.** `surrogate.rollout` chains Δt jumps from sampled
+states (e.g. five 1-year steps), taking a per-step forcing summary and a
+per-step action plan (revetment crest; NaN = none) — "what if I armour the
+toe in year 3?". Model noise is seeded per (seed, step, chunk), so the same
+seed across plans gives common random numbers. `dataset.simulate_plan` is the
+simulator counterpart (switches the action per segment; stored eval seeds
+reproduce eval truth exactly). `experiments/erosion/rollout_check.py` scores:
+chained vs direct vs simulator yearly outcomes, chained-vs-direct
+self-consistency (W1 at 5 years), asset-loss timing P(lost by year y), and a
+what-if plan comparison. Simulator-only finding from the smoke run: on one
+start state, armour from year 0 cut P(asset lost in 5 yr) from 1.00 to 0.06,
+while armour from year 2 changed nothing — the notch was already too deep.
+This timing sensitivity is what the surrogate has to reproduce.
+
+Not yet: Δt self-consistency *loss* (only measured), online data generation
+(developer agent), fidelity gate, planner.

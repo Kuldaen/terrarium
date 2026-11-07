@@ -54,7 +54,49 @@ python experiments/erosion/calibration_report.py --train data/train --eval data/
 ```
 
 Baseline results: [docs/results/calibration-baselines.md](docs/results/calibration-baselines.md).
-A learned surrogate plugs in by implementing `predictors.Predictor`.
+
+### Training the surrogate
+
+Needs `pip install -e ".[dev,torch]"`. Device is auto-detected: CUDA (fp16 on
+Turing such as an RTX 2060, bf16 on Ampere+), Apple MPS (fp32), else CPU.
+The Warp simulator is CPU-only on macOS, GPU on Linux/CUDA.
+
+```bash
+# 1. data (Mac: CPU sim, a few minutes; Linux+CUDA: add --device cuda)
+python experiments/erosion/make_dataset.py --out data --chains 2000 --shard 256 --starts 64 --futures 32
+
+# 2a. MacBook (M2, MPS): quick iteration
+python experiments/erosion/train_surrogate.py --data data/train --out runs/mac --steps 20000 --batch 32 --workers 4
+# 2b. RTX 2060 (6 GB): longer run
+python experiments/erosion/train_surrogate.py --data data/train --out runs/2060 --steps 100000 --batch 64 --workers 6
+# optional "survey-only" variant: geology hidden from the model
+python experiments/erosion/train_surrogate.py --data data/train --out runs/nostrength --no-strength ...
+
+# 3. score against the simulator (add --skip oracle to save time on re-runs)
+python experiments/erosion/calibration_report.py --train data/train --eval data/eval \
+    --surrogate runs/2060/last.pt runs/nostrength/last.pt --out outputs/calib_surrogate
+
+# 4. trajectories + "what if" plans: chained yearly rollouts vs the simulator
+python experiments/erosion/rollout_check.py --eval data/eval --surrogate runs/2060/last.pt --out outputs/rollout
+```
+
+### "What if" forecasts
+
+```python
+from terrarium.phenomena.erosion.cliff2d.surrogate import FlowSurrogate, rollout
+from terrarium.phenomena.erosion.cliff2d.summary import step_summaries
+
+model = FlowSurrogate.load("runs/2060/last.pt", device)
+steps = [360] * 5                                         # five 1-year jumps
+sums = step_summaries(daily_forcing, tidal_amp, steps)    # [N, 5, F] per-step storm summaries
+plan = np.full((N, 5), np.nan); plan[:, 2:] = 3.0         # build 3 m armour at the start of year 3
+traj = rollout(model, rock0, strength, top_row, talus0, steps, sums, plan, n_samples=64, seed=0)
+traj["outcomes"]   # [N, 64, 5, 3] cumulative top retreat / toe retreat / volume lost per year
+```
+
+Re-using `seed` (and the same forcing) across plans gives common random
+numbers: plan differences are not drowned in sampling noise.
+`dataset.simulate_plan` is the simulator equivalent for checking.
 
 Randomness enters only through `forcing` and `seeds`, so the same storm
 history can be replayed under different actions (common random numbers), and
